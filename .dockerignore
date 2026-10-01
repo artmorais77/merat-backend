@@ -1,0 +1,7 @@
+node_modules
+.git
+.env
+.agents/*
+.claude/*
+.windsurf/*
+skills-lock.json
