@@ -124,10 +124,30 @@ model User {
   created_at      DateTime  @default(now())
   updated_at      DateTime? @updatedAt
 
+  refresh_tokens RefreshToken[]
+
   company Company @relation(fields: [company_id], references: [id], onDelete: Cascade)
   role    Role    @relation(fields: [role_id, company_id], references: [id, company_id], onDelete: Restrict)
 
   @@index([company_id])
   @@index([role_id])
   @@map("users")
+}
+
+model RefreshToken {
+  id             String    @id @default(uuid()) @db.Uuid
+  user_id        String    @db.Uuid
+  family_id      String    @default(uuid()) @db.Uuid
+  replaced_by_id String?   @db.Uuid
+  token_hash     String    @unique @db.VarChar(64)
+  expires_at     DateTime  @db.Timestamptz(3)
+  revoked_at     DateTime? @db.Timestamptz(3)
+  created_at     DateTime  @default(now()) @db.Timestamptz(3)
+  updated_at     DateTime  @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([family_id])
+  @@map("refresh_tokens")
 }
