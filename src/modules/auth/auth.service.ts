@@ -6,12 +6,6 @@ import { JwtService, TokenExpiredError } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
 import crypto from "node:crypto";
 
-interface IPayload {
-	user_id: string;
-	email: string;
-	exp: string;
-}
-
 @Injectable()
 export class AuthService {
 	constructor(
@@ -20,16 +14,21 @@ export class AuthService {
 		private readonly configService: ConfigService,
 	) {}
 
-	private readonly generateExpiresAt = 7 * 24 * 60 * 60 * 1000;
+	private readonly generateExpiresAtRefreshToken = 7 * 24 * 60 * 60 * 1000;
+	private readonly generateExpiresAtAccessToken = 15 * 60 * 1000;
 
 	private async generateTokens(user_id: string, email: string) {
 		const payload = { user_id, email };
 
-		const accessToken = await this.jwtService.signAsync(payload, { jwtid: crypto.randomUUIDv7() });
+		const accessToken = await this.jwtService.signAsync(payload, {
+			secret: this.configService.getOrThrow<string>("JWT_ACCESS_TOKEN_SECRET"),
+			jwtid: crypto.randomUUIDv7(),
+			expiresIn: this.generateExpiresAtAccessToken / 1000,
+		});
 		const refreshToken = await this.jwtService.signAsync(payload, {
 			secret: this.configService.getOrThrow<string>("JWT_REFRESH_TOKEN_SECRET"),
-			expiresIn: this.generateExpiresAt / 1000,
 			jwtid: crypto.randomUUIDv7(),
+			expiresIn: this.generateExpiresAtRefreshToken / 1000,
 		});
 		return { accessToken, refreshToken };
 	}
@@ -57,10 +56,24 @@ export class AuthService {
 		await this.authRepository.insertRefreshTokenHash({
 			userId: user.id,
 			tokenHash: this.hashToken(tokens.refreshToken),
-			expiresAt: new Date(Date.now() + this.generateExpiresAt),
+			expiresAt: new Date(Date.now() + this.generateExpiresAtRefreshToken),
 		});
 
-		return { ...tokens, user: userWithoutPassword, expiresAt: this.generateExpiresAt };
+		return {
+			...tokens,
+			user: userWithoutPassword,
+			expiresAtAccessToken: this.generateExpiresAtAccessToken,
+			expiresAtRefreshToken: this.generateExpiresAtRefreshToken,
+		};
+	}
+
+	async signOut(refresh_token?: string) {
+		if (!refresh_token) return;
+
+		const tokenRecord = await this.authRepository.findTokenByTokenHash(this.hashToken(refresh_token));
+		if (tokenRecord?.revoked_at === null) {
+			await this.authRepository.revokeTokenByFamilyId(tokenRecord.family_id);
+		}
 	}
 
 	async refreshToken(refresh_token: string) {
@@ -99,11 +112,24 @@ export class AuthService {
 		await this.authRepository.rotateRefreshToken({
 			userId: user.id,
 			familyId: refreshToken.family_id,
-			expiresAt: new Date(Date.now() + this.generateExpiresAt),
+			expiresAt: new Date(Date.now() + this.generateExpiresAtRefreshToken),
 			tokenHash: this.hashToken(tokens.refreshToken),
 			idOldRefreshToken: refreshToken.id,
 		});
 
-		return { ...tokens, user, expiresAt: this.generateExpiresAt };
+		return {
+			...tokens,
+			user,
+			expiresAtAccessToken: this.generateExpiresAtAccessToken,
+			expiresAtRefreshToken: this.generateExpiresAtRefreshToken,
+		};
+	}
+
+	async me(userId: string) {
+		const user = await this.authRepository.findUserById(userId);
+
+		if (!user?.is_active) throw new UnauthorizedException("Sessão inválida ou expirada");
+
+		return { user };
 	}
 }
